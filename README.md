@@ -12,6 +12,8 @@ This repository only contains **patch files and scripts**. The source code is ge
 - JDK 21+
 - Internet connection (first-time setup)
 
+[LightingLuminol](https://github.com/LuminolMC/LightingLuminol) is recommended for a better experience.
+
 ---
 
 ## Setup (First Time)
