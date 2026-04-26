@@ -1,0 +1,110 @@
+name: Build and Auto-Update LibsDisguises
+
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  schedule:
+    - cron: '0 0 * * *'
+  push:
+    branches: [ "main", "master" ]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for Upstream Updates
+        id: check_upstream
+        run: |
+          # Get current config
+          UPSTREAM_URL=$(grep "^upstreamUrl=" gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')
+          OLD_REF=$(grep "^upstreamRef=" gradle.properties | cut -d'=' -f2 | tr -d '[:space:]')
+          
+          echo "Current Upstream Ref: $OLD_REF"
+          
+          # Get the latest commit hash from the remote master branch
+          NEW_REF=$(git ls-remote "$UPSTREAM_URL" master | awk '{ print $1 }')
+          
+          if [ -n "$NEW_REF" ] && [ "$NEW_REF" != "$OLD_REF" ]; then
+            echo "Upstream changed! New Ref: $NEW_REF"
+            sed -i "s/^upstreamRef=.*/upstreamRef=$NEW_REF/" gradle.properties
+            
+            # Configure Git and commit changes
+            git config --global user.email "github-actions@github.com"
+            git config --global user.name "github-actions"
+            git add gradle.properties
+            git commit -m "chore: update upstreamRef to $NEW_REF [skip ci]"
+            git push
+            
+            echo "updated=true" >> $GITHUB_OUTPUT
+            echo "new_ref=$NEW_REF" >> $GITHUB_OUTPUT
+          else
+            echo "No upstream changes detected."
+            echo "updated=false" >> $GITHUB_OUTPUT
+            echo "new_ref=$OLD_REF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Configure Git for Setup
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Run Setup
+        run: |
+          chmod +x setup.sh
+          ./setup.sh
+
+      - name: Build with Gradle
+        run: |
+          cd src
+          chmod +x gradlew
+          ./gradlew build
+
+      - name: Calculate SHA1
+        id: calculate_sha1
+        run: |
+          # Find generated jar file
+          JAR_FILE=$(ls src/target/*.jar 2>/dev/null | head -n 1)
+          if [ -z "$JAR_FILE" ]; then
+            JAR_FILE=$(ls src/plugin/build/libs/*.jar 2>/dev/null | head -n 1)
+          fi
+          
+          if [ -z "$JAR_FILE" ]; then
+            echo "Error: No jar file found!"
+            exit 1
+          fi
+          
+          echo "Found JAR: $JAR_FILE"
+          echo "jar_path=$JAR_FILE" >> $GITHUB_OUTPUT
+          echo "sha1=$(sha1sum $JAR_FILE | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: github.event_name != 'pull_request'
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: LibsDisguises Build #${{ github.run_number }}
+          body: |
+            Upstream Ref: `${{ steps.check_upstream.outputs.new_ref }}`
+            Auto-updated: `${{ steps.check_upstream.outputs.updated }}`
+            JAR SHA1: `${{ steps.calculate_sha1.outputs.sha1 }}`
+          draft: false
+          prerelease: false
+          files: |
+            ${{ steps.calculate_sha1.outputs.jar_path }}
