@@ -1,12 +1,10 @@
 name: Build and Auto-Update LibsDisguises
 
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   schedule:
-    - cron: '0 0 * * *'
+    - cron: '0 0 * * *' # Daily check
   push:
     branches: [ "main", "master" ]
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 permissions:
@@ -53,17 +51,42 @@ jobs:
             echo "new_ref=$OLD_REF" >> $GITHUB_OUTPUT
           fi
 
+      - name: Should Continue
+        id: should_continue
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ steps.check_upstream.outputs.updated }}" == "true" ]; then
+            echo "continue=true" >> $GITHUB_OUTPUT
+          else
+            echo "continue=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Configure Git for Setup
+        if: steps.should_continue.outputs.continue == 'true'
         run: |
           git config --global user.email "github-actions@github.com"
           git config --global user.name "github-actions"
 
       - name: Run Setup
+        if: steps.should_continue.outputs.continue == 'true'
         run: |
           chmod +x setup.sh
           ./setup.sh
 
+      - name: Get Version from Gradle
+        if: steps.should_continue.outputs.continue == 'true'
+        id: get_version
+        run: |
+          # Extract version from plugin/build.gradle.kts
+          VERSION=$(grep "^version =" src/plugin/build.gradle.kts | cut -d'"' -f2)
+          if [ -z "$VERSION" ]; then
+            # Fallback to root build.gradle.kts
+            VERSION=$(grep "^version =" src/build.gradle.kts | cut -d'"' -f2)
+          fi
+          echo "Project Version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
       - name: Set up JDK 21
+        if: steps.should_continue.outputs.continue == 'true'
         uses: actions/setup-java@v4
         with:
           java-version: '21'
@@ -74,13 +97,14 @@ jobs:
             src/**/gradle-wrapper.properties
 
       - name: Build with Gradle
+        if: steps.should_continue.outputs.continue == 'true'
         run: |
           cd src
           chmod +x gradlew
           ./gradlew build
-          ./gradlew build
 
       - name: Calculate SHA1
+        if: steps.should_continue.outputs.continue == 'true'
         id: calculate_sha1
         run: |
           # Find generated jar file
@@ -99,11 +123,11 @@ jobs:
           echo "sha1=$(sha1sum $JAR_FILE | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Create Release
+        if: steps.should_continue.outputs.continue == 'true' && github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
-        if: github.event_name != 'pull_request'
         with:
-          tag_name: build-${{ github.run_number }}
-          name: LibsDisguises Build ${{ github.run_number }}
+          tag_name: v${{ steps.get_version.outputs.version }}-${{ github.run_number }}
+          name: LibsDisguises v${{ steps.get_version.outputs.version }} #(Build ${{ github.run_number }})
           body: |
             Upstream Ref: `${{ steps.check_upstream.outputs.new_ref }}`
             Auto-updated: `${{ steps.check_upstream.outputs.updated }}`
