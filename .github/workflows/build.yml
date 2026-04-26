@@ -103,7 +103,7 @@ jobs:
         if: github.event_name != 'pull_request'
         with:
           tag_name: build-${{ github.run_number }}
-          name: LibsDisguises Build #${{ github.run_number }}
+          name: LibsDisguises Build ${{ github.run_number }}
           body: |
             Upstream Ref: `${{ steps.check_upstream.outputs.new_ref }}`
             Auto-updated: `${{ steps.check_upstream.outputs.updated }}`
